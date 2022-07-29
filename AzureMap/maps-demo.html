@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Azure Maps Demo</title>
+
+  <meta charset="utf-8">
+
+  <!-- Ensures that IE and Edge uses the latest version and doesn't emulate an older version -->
+  <meta http-equiv="x-ua-compatible" content="IE=Edge">
+
+  <!-- Ensures the web page looks good on all screen sizes -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <!-- Add references to the Azure Maps Map control JavaScript and CSS files -->
+  <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/2/atlas.min.css" type="text/css">
+  <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/2/atlas.min.js"></script>
+
+  <!-- Add references to local JavaScriptand CSS files -->
+  <link rel="stylesheet" href="css/style.css" type="text/css">
+  <script src="js/vehicles.js"></script>
+  <script src="js/zones.js"></script>
+</head>
+
+<body>
+
+  <div id="myMap"></div>
+
+  <script type="text/javascript">
+
+    var azureMapsSubscriptionKey = 'TODO';
+
+    // Initialize a new Map instance
+    var map = new atlas.Map('myMap', {
+      center: [-111.917202, 40.97946],
+      zoom: 14,
+      language: 'en-US',     
+      authOptions: {
+        authType: 'subscriptionKey',
+        subscriptionKey: azureMapsSubscriptionKey
+      }
+    });
+
+    // Create a popup but leave it closed for now
+    var popup = new atlas.Popup({
+      pixelOffset: [0, -18],
+      closeButton: true
+    });
+
+    // Define an HTML template for the popup content
+    var popupTemplate = '<div class="popup-dialog"><div class="header">{header}</div><div class="details">{details}</div>';
+
+    // Wait until the map resources are ready
+    map.events.add('ready', function() {
+
+      var controlsPosition = 'bottom-left';
+
+      // Add a Zoom control
+      map.controls.add(new atlas.control.ZoomControl(), {
+        position: controlsPosition
+      });
+
+      // Add a Pitch control
+      map.controls.add(new atlas.control.PitchControl(), {
+         position: controlsPosition
+      });
+
+      // Add a Style control
+      var styleControl = new atlas.control.StyleControl(
+         {
+             mapStyles: ['road', 'grayscale_dark', 'night', 'satellite']
+         }
+      );
+      map.controls.add(styleControl, {
+         position: controlsPosition
+      });
+
+      // Add a data source for the zones
+      var zoneDataSource = new atlas.source.DataSource();
+      map.sources.add(zoneDataSource);
+
+      // Add a polygon layer to render the zones
+      var zonePolygonLayer = new atlas.layer.PolygonLayer(zoneDataSource, null, {
+        fillColor: '#ffe0b3',
+        fillOpacity: 0.6
+      });
+      map.layers.add(zonePolygonLayer);
+
+      // Create a line layer to render the outline of the polygons
+      var zoneLineLayer = new atlas.layer.LineLayer(zoneDataSource, null, {
+        strokeColor: '#ffc266',
+        strokeWidth: 1
+      });
+      map.layers.add(zoneLineLayer);
+
+      // Load zone areas in the zone data source
+      zoneDataSource.add(getZonesData());
+
+      // Add a data source for the vehicles
+      var vehicleDataSource = new atlas.source.DataSource();
+      map.sources.add(vehicleDataSource);
+
+      // Load icons
+      var iconPromises = [
+        map.imageSprite.add('truck', 'https://raw.githubusercontent.com/jurgenonazure/getting-started-azure-maps/master/images/truck_40.png'),
+        map.imageSprite.add('excavator', 'https://raw.githubusercontent.com/jurgenonazure/getting-started-azure-maps/master/images/excavator_40.png')
+      ];
+
+      // Wait for icons to be ready
+      Promise.all(iconPromises).then(function () {
+
+        // Add a symbol layer to render the vehicle points
+        var vehicleLayer = new atlas.layer.SymbolLayer(vehicleDataSource, null, {
+
+        iconOptions: {
+            image: ['get', 'vehicleType'],
+            allowOverlap: true
+          }
+
+        });
+        map.layers.add(vehicleLayer);
+
+        // Add a click event to the symbol layer
+        map.events.add('click', vehicleLayer, function (e) {
+
+          // Make sure that the point exists
+          if (e.shapes && e.shapes.length > 0) {
+
+            var properties = e.shapes[0].getProperties();
+            var coordinate = e.shapes[0].getCoordinates();
+
+            // Find the address for the coordinates
+            getAddress(coordinate, (address) => {
+
+              var fullVehicleName = properties.vehicleType + ' #' + properties.fleetNumber;
+
+              var detailsHtml = 
+                '<p>' 
+                + '<span class="lat-lon-label">Lat:</span>' + coordinate[1] + '<br />'
+                + '<span class="lat-lon-label">Lon:</span>' + coordinate[0] 
+                + '</p>'
+                + '<p>'
+                + address
+                + '</p>';
+
+              var contentHtml = popupTemplate
+                .replace(/{header}/g, fullVehicleName)
+                .replace(/{details}/g, detailsHtml);
+
+              popup.setOptions({
+                // Set the HTML content of the popup
+                content: contentHtml,
+
+                // Set the popup's position to the vehicle's coordinate
+                position: coordinate
+              });
+
+              //Open the popup
+              popup.open(map);
+
+            });
+          }
+        });
+   
+        // Load vehicle locations in the vehicle data source
+        vehicleDataSource.add(getVehiclesData());
+      });
+
+    });
+
+    function getAddress(coordinate, callback){
+
+      // Compose the search API url with the latitude/longitude query
+      var apiRequestUrl = 'https://atlas.microsoft.com/search/address/reverse/json?subscription-key='
+        + azureMapsSubscriptionKey + '&api-version=1.0&query=' + coordinate[1] + ',' + coordinate[0];
+
+      console.log('url', apiRequestUrl);
+
+      // Execute the request
+      httpGet(apiRequestUrl, (data) => {
+        
+        // Log returned json to console
+        console.log('data', data);
+
+        // Parse the returned json
+        var jsonParsed = JSON.parse(data);
+
+        // Find address
+        var address = jsonParsed.addresses && jsonParsed.addresses.length > 0 
+          ? jsonParsed.addresses[0].address.freeformAddress
+          : '(Unknown address)';
+
+        callback(address);
+
+      });
+    }
+
+    function httpGet(url, callback) {
+      // compatible with IE7+, Firefox, Chrome, Opera, Safari
+      var xmlhttp = new XMLHttpRequest();
+
+      xmlhttp.onreadystatechange = function () {
+        if (xmlhttp.readyState == 4 && xmlhttp.status == 200) {
+          callback(xmlhttp.responseText);
+        }
+      }
+
+      xmlhttp.open("GET", url, true);
+      xmlhttp.send();
+    }
+
+  </script>
+
+</body>
+</html>
